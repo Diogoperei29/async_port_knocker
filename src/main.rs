@@ -1,6 +1,5 @@
 use clap::{Parser, ValueEnum};
 use futures::StreamExt;
-use hex;
 use tokio::{
     net::{TcpStream, UdpSocket},
     time::{sleep, timeout, Duration},
@@ -50,23 +49,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Parse ports
-    let ports = parse_ports(&cli.sequence).map_err(|e| {
-        eprintln!("Port parse error: {}", e);
-        e
-    })?;
-
-    // Decode payload once
-    let payload_bytes = if !cli.payload.is_empty() {
-        Some(hex::decode(&cli.payload).map_err(|e| {
-            eprintln!("Invalid hex payload: {}", e);
-            e
-        })?)
-    } else {
-        None
+    let ports = match parse_ports(&cli.sequence) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Port parse error: {e}");
+            return Ok(());
+        }
     };
 
-    // Build a stream of knock futures
-    let knock_futs = ports.into_iter().map(|port| {
+    // Decode UDP payload once, if any
+    let payload_bytes = if cli.payload.is_empty() {
+        None
+    } else {
+        let data =
+            hex::decode(&cli.payload).inspect_err(|e| eprintln!("Invalid hex payload: {e}"))?;
+        Some(data)
+    };
+
+    // Build and run knock futures with limited concurrency
+    let stream = futures::stream::iter(ports.into_iter().map(|port| {
         let host = cli.host.clone();
         let proto = cli.protocol;
         let to_ms = cli.timeout;
@@ -77,34 +78,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 sleep(Duration::from_millis(delay_ms)).await;
             }
             match proto {
-                Protocol::Tcp => {
-                    knock_tcp(&host, port, to_ms).await;
-                }
-                Protocol::Udp => {
-                    knock_udp(&host, port, to_ms, payload.clone()).await;
-                }
+                Protocol::Tcp => knock_tcp(&host, port, to_ms).await,
+                Protocol::Udp => knock_udp(&host, port, to_ms, payload.clone()).await,
             }
         }
-    });
+    }))
+    .buffer_unordered(cli.concurrency);
 
-    // Drive them with limited concurrency
-    futures::stream::iter(knock_futs)
-        .buffer_unordered(cli.concurrency)
-        .for_each(|_| futures::future::ready(()))
-        .await;
-
+    stream.for_each(|_| futures::future::ready(())).await;
     Ok(())
 }
 
 async fn knock_tcp(host: &str, port: u16, to_ms: u64) {
-    let addr = (host, port);
-    match timeout(Duration::from_millis(to_ms), TcpStream::connect(addr)).await {
-        Ok(Ok(s)) => {
-            println!("TCP {}:{} OK", host, port);
-            drop(s);
-        }
-        Ok(Err(e)) => eprintln!("TCP {}:{} ERR {}", host, port, e),
-        Err(_) => eprintln!("TCP {}:{} TIMEOUT", host, port),
+    match timeout(
+        Duration::from_millis(to_ms),
+        TcpStream::connect((host, port)),
+    )
+    .await
+    {
+        Ok(Ok(_s)) => println!("TCP {host}:{port} OK"),
+        Ok(Err(e)) => eprintln!("TCP {host}:{port} ERR {e}"),
+        Err(_) => eprintln!("TCP {host}:{port} TIMEOUT"),
     }
 }
 
@@ -112,7 +106,7 @@ async fn knock_udp(host: &str, port: u16, to_ms: u64, payload: Option<Vec<u8>>) 
     let socket = match UdpSocket::bind("0.0.0.0:0").await {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("UDP bind error: {}", e);
+            eprintln!("UDP bind error: {e}");
             return;
         }
     };
@@ -123,11 +117,9 @@ async fn knock_udp(host: &str, port: u16, to_ms: u64, payload: Option<Vec<u8>>) 
     )
     .await
     {
-        Ok(Ok(n)) => {
-            println!("UDP {}:{} sent {} bytes", host, port, n);
-        }
-        Ok(Err(e)) => eprintln!("UDP {}:{} ERR {}", host, port, e),
-        Err(_) => eprintln!("UDP {}:{} TIMEOUT", host, port),
+        Ok(Ok(n)) => println!("UDP {host}:{port} sent {n} bytes"),
+        Ok(Err(e)) => eprintln!("UDP {host}:{port} ERR {e}"),
+        Err(_) => eprintln!("UDP {host}:{port} TIMEOUT"),
     }
 }
 
@@ -138,7 +130,7 @@ fn parse_ports(s: &str) -> Result<Vec<u16>, String> {
         let p = part
             .trim()
             .parse::<u16>()
-            .map_err(|_| format!("'{}' is not a valid port", part))?;
+            .map_err(|_| format!("'{part}' is not a valid port"))?;
         v.push(p);
     }
     Ok(v)
