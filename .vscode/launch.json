@@ -1,0 +1,17 @@
+{
+   "version": "0.2.0",
+   "configurations": [
+      {
+         "name": "Debug (CodeLLDB)",
+         "type": "lldb",
+         "request": "launch",
+         "program": "${workspaceFolder}/target/debug/async_port_knocker.exe",
+         "args": [],
+         "cwd": "${workspaceFolder}",
+         "stopOnEntry": false,
+         "sourceLanguages": [
+            "rust"
+         ]
+      }
+   ]
+}
