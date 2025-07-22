@@ -1,7 +1,7 @@
 use clap::{Parser, ValueEnum};
 use futures::StreamExt;
 use tokio::{
-    net::{TcpStream, UdpSocket},
+    net::{lookup_host, TcpStream, UdpSocket},
     time::{sleep, timeout, Duration},
 };
 
@@ -36,6 +36,14 @@ struct Cli {
     /// UDP payload as hex (e.g. "deadbeef")
     #[arg(long, default_value_t = String::new())]
     payload: String,
+
+    /// Number of retries per knock
+    #[arg(short = 'r', long, default_value_t = 1)]
+    retries: usize,
+
+    /// Backoff between retries in milliseconds
+    #[arg(short = 'b', long, default_value_t = 100)]
+    backoff: u64,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -48,7 +56,6 @@ enum Protocol {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    // Parse ports
     let ports = match parse_ports(&cli.sequence) {
         Ok(v) => v,
         Err(e) => {
@@ -57,7 +64,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Decode UDP payload once, if any
     let payload_bytes = if cli.payload.is_empty() {
         None
     } else {
@@ -66,60 +72,108 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(data)
     };
 
-    // Build and run knock futures with limited concurrency
-    let stream = futures::stream::iter(ports.into_iter().map(|port| {
+    let knocks = ports.into_iter().map(|port| {
         let host = cli.host.clone();
         let proto = cli.protocol;
         let to_ms = cli.timeout;
         let delay_ms = cli.delay;
+        let retries = cli.retries;
+        let backoff = cli.backoff;
         let payload = payload_bytes.clone();
         async move {
             if delay_ms > 0 {
                 sleep(Duration::from_millis(delay_ms)).await;
             }
             match proto {
-                Protocol::Tcp => knock_tcp(&host, port, to_ms).await,
-                Protocol::Udp => knock_udp(&host, port, to_ms, payload.clone()).await,
+                Protocol::Tcp => {
+                    knock_tcp(&host, port, to_ms, retries, backoff).await;
+                }
+                Protocol::Udp => {
+                    knock_udp(&host, port, to_ms, retries, backoff, payload.clone()).await;
+                }
             }
         }
-    }))
-    .buffer_unordered(cli.concurrency);
+    });
 
-    stream.for_each(|_| futures::future::ready(())).await;
+    futures::stream::iter(knocks)
+        .buffer_unordered(cli.concurrency)
+        .for_each(|_| futures::future::ready(()))
+        .await;
+
     Ok(())
 }
 
-async fn knock_tcp(host: &str, port: u16, to_ms: u64) {
-    match timeout(
-        Duration::from_millis(to_ms),
-        TcpStream::connect((host, port)),
-    )
-    .await
-    {
-        Ok(Ok(_s)) => println!("TCP {host}:{port} OK"),
-        Ok(Err(e)) => eprintln!("TCP {host}:{port} ERR {e}"),
-        Err(_) => eprintln!("TCP {host}:{port} TIMEOUT"),
+async fn knock_tcp(host: &str, port: u16, to_ms: u64, retries: usize, backoff: u64) {
+    for attempt in 1..=retries {
+        match timeout(
+            Duration::from_millis(to_ms),
+            TcpStream::connect((host, port)),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {
+                println!("TCP {host}:{port} OK");
+                return;
+            }
+            Ok(Err(e)) => eprintln!("TCP {host}:{port} ERR {e}"),
+            Err(_) => eprintln!("TCP {host}:{port} TIMEOUT"),
+        }
+        if attempt < retries {
+            sleep(Duration::from_millis(backoff)).await;
+        }
     }
 }
 
-async fn knock_udp(host: &str, port: u16, to_ms: u64, payload: Option<Vec<u8>>) {
-    let socket = match UdpSocket::bind("0.0.0.0:0").await {
+async fn knock_udp(
+    host: &str,
+    port: u16,
+    to_ms: u64,
+    retries: usize,
+    backoff: u64,
+    payload: Option<Vec<u8>>,
+) {
+    // Resolve to a SocketAddr
+    let addr = match lookup_host((host, port)).await {
+        Ok(mut addrs) => match addrs.next() {
+            Some(a) => a,
+            None => {
+                eprintln!("UDP lookup found no addresses for {host}:{port}");
+                return;
+            }
+        },
+        Err(e) => {
+            eprintln!("UDP lookup error: {e}");
+            return;
+        }
+    };
+
+    // Bind with correct family
+    let bind_addr = if addr.is_ipv6() {
+        "[::]:0"
+    } else {
+        "0.0.0.0:0"
+    };
+    let socket = match UdpSocket::bind(bind_addr).await {
         Ok(s) => s,
         Err(e) => {
             eprintln!("UDP bind error: {e}");
             return;
         }
     };
+
     let data = payload.unwrap_or_default();
-    match timeout(
-        Duration::from_millis(to_ms),
-        socket.send_to(&data, (host, port)),
-    )
-    .await
-    {
-        Ok(Ok(n)) => println!("UDP {host}:{port} sent {n} bytes"),
-        Ok(Err(e)) => eprintln!("UDP {host}:{port} ERR {e}"),
-        Err(_) => eprintln!("UDP {host}:{port} TIMEOUT"),
+    for attempt in 1..=retries {
+        match timeout(Duration::from_millis(to_ms), socket.send_to(&data, addr)).await {
+            Ok(Ok(n)) => {
+                println!("UDP {host}:{port} sent {n} bytes");
+                return;
+            }
+            Ok(Err(e)) => eprintln!("UDP {host}:{port} ERR {e}"),
+            Err(_) => eprintln!("UDP {host}:{port} TIMEOUT"),
+        }
+        if attempt < retries {
+            sleep(Duration::from_millis(backoff)).await;
+        }
     }
 }
 

@@ -2,15 +2,18 @@
 
 A small Rust CLI for sending TCP/UDP "knocks" to a host.  
 Supports async concurrency, inter-knock delays, and custom UDP payloads.
+This was done as a fun project to learn RUST :)
 
 ## Features
 
-- TCP & UDP knocking
-- Configurable timeout per knock
-- Inter-knock delay (`--delay`)
-- Max concurrency (`--concurrency`)
-- Hex-encoded UDP payloads (`--payload`)
-- Unit tests for port parsing
+- TCP & UDP knocking  
+- Configurable timeout per knock (`--timeout`)  
+- Inter-knock delay (`--delay`)  
+- Max concurrency (`--concurrency`)  
+- Hex-encoded UDP payloads (`--payload`)  
+- Retries (`--retries`) with backoff (`--backoff`)  
+- IPv4 & IPv6 support  
+- Unit tests for port parsing  
 - CI: `cargo fmt`, `clippy`, `test`
 
 ## Requirements
@@ -28,21 +31,43 @@ cargo build --release
 
 ## Usage 
 
-#### basic TCP sequence
+#### Basic TCP knock:
+```bash
+cargo run --release -- \
+  --host scanme.nmap.org \
+  --protocol tcp \
+  --sequence 22,81 \
+  --timeout 300
+```
+
+#### Advanced usage:
 ```bash
 cargo run --release -- \
   --host example.com \
-  --protocol tcp \
-  --sequence 7000,8000,9000
-```
-#### with delay & concurrency
-```bash
-cargo run --release -- \
-  --host 192.0.2.1 \
   --protocol udp \
   --sequence 1000,2000,3000 \
   --timeout 200 \
   --delay 50 \
   --concurrency 2 \
-  --payload deadbeef
+  --payload deadbeef \
+  --retries 3 \
+  --backoff 150
 ```
+
+#### IPv6 example:
+```bash
+cargo run --release -- \
+  --host 2606:4700:4700::1111 \
+  --protocol udp \
+  --sequence 53 \
+  --retries 2
+```
+
+## Next Steps
+
+- Better logging (e.g. `tracing`)  
+- ?Publish to crates.io
+
+## License
+
+MIT
