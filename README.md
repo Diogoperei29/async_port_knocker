@@ -1,7 +1,7 @@
 # Async Port Knocker Scanner
 
 A small Rust CLI for sending TCP/UDP "knocks" to a host.  
-Supports async concurrency, inter-knock delays, and custom UDP payloads.
+Supports async concurrency, inter-knock delays, and custom UDP payloads.  
 This was done as a fun project to learn RUST :)
 
 ## Features
