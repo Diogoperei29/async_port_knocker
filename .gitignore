@@ -1,1 +1,21 @@
-/target
+# cargo build output
+/target/
+
+# binaries
+/*.exe
+/*.dll
+/*.so
+/*.dylib
+
+# logs, temporary files, editor swap files
+*.log
+*.tmp
+*.temp
+*~
+*.swp
+*.swo
+
+# vsc directories
+.vscode/
+.idea/
+*.iml
