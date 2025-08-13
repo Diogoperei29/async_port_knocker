@@ -1,3 +1,4 @@
+use crate::AppError;
 use rand::{rngs::ThreadRng, RngCore};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -15,9 +16,12 @@ pub(crate) async fn knock_udp(
     backoff: u64,
     ips: Arc<Vec<SocketAddr>>,
     payload: Option<Arc<Vec<u8>>>,
-) {
+) -> Result<(), AppError> {
     // Copy first resolved address (SocketAddr is Copy), set port
-    let mut target = ips.first().copied().unwrap();
+    let mut target = match ips.first().copied() {
+        Some(addr) => addr,
+        None => return Err(AppError::NoDns),
+    };
     target.set_port(port);
 
     // Pick a random local ephemeral port
@@ -36,7 +40,7 @@ pub(crate) async fn knock_udp(
         Ok(s) => s,
         Err(e) => {
             eprintln!("UDP {host}:{port} bind ERR {e}");
-            return;
+            return Ok(());
         }
     };
 
@@ -55,7 +59,7 @@ pub(crate) async fn knock_udp(
                 match timeout(Duration::from_millis(to_ms), socket.recv_from(&mut buf)).await {
                     Ok(Ok((nrecv, src))) => {
                         println!("UDP {host}:{port} received {nrecv} bytes from {src}");
-                        return;
+                        return Ok(());
                     }
                     Ok(Err(e)) => eprintln!("UDP {host}:{port} recv ERR {e}"),
                     Err(_) => eprintln!("UDP {host}:{port} no response (recv timeout)"),
@@ -68,4 +72,6 @@ pub(crate) async fn knock_udp(
             sleep(Duration::from_millis(backoff)).await;
         }
     }
+
+    Ok(())
 }

@@ -56,7 +56,7 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
                     knock_tcp(host.clone(), port, to_ms, retries, backoff).await;
                 }
                 cli::Protocol::Udp => {
-                    knock_udp(
+                    if let Err(e) = knock_udp(
                         host.clone(),
                         port,
                         to_ms,
@@ -65,7 +65,10 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
                         ips.clone(),
                         payload.clone(),
                     )
-                    .await;
+                    .await
+                    {
+                        eprintln!("UDP knock error: {e}");
+                    }
                 }
             }
         }
