@@ -70,6 +70,31 @@ cargo run --release -- \
   --retries 2
 ```
 
+## Knocker test script
+
+A simple python script is provided to run various tests to the knocker found in `/scripts/test_knocker.py`
+
+To run this script:
+```bash
+python3 scripts/test_knocker.py
+```
+
+Expected:
+```bash
+=== async_port_knocker functional tests ===
+
+- TCP local success ... PASS
+  stdout: TCP 127.0.0.1:64209 OK stderr:
+[...]
+
+Summary: 9/9 passed, 0 failed.
+```
+
+> [!NOTE]  
+> - If your binary name differs, set KNOCKER_BIN to its absolute path.
+> - If you’re offline or want to avoid public traffic, export SKIP_PUBLIC=1 to skip public tests.
+> - You can adjust timeouts to match your environment’s speed if needed.
+
 ## Next Steps
 
 - Propper logging (e.g. `tracing`)  

@@ -1,8 +1,6 @@
+use crate::retry::retry_with_backoff;
 use std::sync::Arc;
-use tokio::{
-    net::TcpStream,
-    time::{sleep, timeout, Duration},
-};
+use tokio::net::TcpStream;
 
 /// Perform a TCP knock with per-attempt logging, retries, timeouts and backoff.
 pub(crate) async fn knock_tcp(
@@ -12,31 +10,34 @@ pub(crate) async fn knock_tcp(
     retries: usize,
     backoff: u64,
 ) {
-    for attempt in 1..=retries {
-        match timeout(
-            Duration::from_millis(to_ms),
-            TcpStream::connect((host.as_str(), port)),
-        )
-        .await
-        {
-            // Connected successfully
-            Ok(Ok(_stream)) => {
-                println!("TCP {host}:{port} OK");
-                return;
+    let host_for_timeout = host.clone();
+    let _ = retry_with_backoff(
+        retries,
+        to_ms,
+        backoff,
+        |attempt| {
+            let host = host.clone();
+            async move {
+                match TcpStream::connect((host.as_str(), port)).await {
+                    // Connected successfully
+                    Ok(_stream) => {
+                        println!("TCP {host}:{port} OK");
+                        Ok::<bool, ()>(true) // stop retrying
+                    }
+                    // Got an immediate I/O error
+                    Err(e) => {
+                        eprintln!("TCP {host}:{port} ERR {e} (attempt {attempt})");
+                        Ok::<bool, ()>(false) // retry
+                    }
+                }
             }
-            // Got an immediate I/O error
-            Ok(Err(e)) => {
-                eprintln!("TCP {host}:{port} ERR {e}");
-            }
-            // Timed out before connect completed
-            Err(_) => {
-                eprintln!("TCP {host}:{port} TIMEOUT");
-            }
-        }
-
-        // If we're going to retry, wait the backoff interval
-        if attempt < retries {
-            sleep(Duration::from_millis(backoff)).await;
-        }
-    }
+        },
+        |attempt| {
+            eprintln!(
+                "TCP {}:{} TIMEOUT (attempt {attempt})",
+                host_for_timeout, port
+            );
+        },
+    )
+    .await;
 }

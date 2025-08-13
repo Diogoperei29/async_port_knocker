@@ -1,12 +1,14 @@
 // Declare all the modules that make up this library.
 pub mod cli;
 pub mod errors;
-mod tcp;
-mod udp;
+pub mod retry;
+pub mod tcp;
+pub mod udp;
 
 // Re-export the main run function and the Cli struct for the binary to use.
 pub use cli::Cli;
 pub use errors::AppError;
+pub use retry::retry_with_backoff;
 
 use crate::{tcp::knock_tcp, udp::knock_udp};
 use futures::StreamExt;

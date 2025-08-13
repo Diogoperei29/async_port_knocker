@@ -1,11 +1,8 @@
-use crate::AppError;
+use crate::{retry::retry_with_backoff, AppError};
 use rand::{rngs::ThreadRng, RngCore};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::{
-    net::UdpSocket,
-    time::{sleep, timeout, Duration},
-};
+use tokio::net::UdpSocket;
 
 /// Perform a UDP knock with retries, random source port, and optional reply.
 pub(crate) async fn knock_udp(
@@ -40,7 +37,7 @@ pub(crate) async fn knock_udp(
         Ok(s) => s,
         Err(e) => {
             eprintln!("UDP {host}:{port} bind ERR {e}");
-            return Ok(());
+            return Ok(()); // keep same behavior for bind errors
         }
     };
 
@@ -49,29 +46,48 @@ pub(crate) async fn knock_udp(
         Some(buf) => buf.as_slice(),
         None => &[],
     };
-    let mut buf = vec![0u8; 1500];
+    let buf = vec![0u8; 1500];
 
-    for attempt in 1..=retries {
-        // Send datagram with timeout
-        match timeout(Duration::from_millis(to_ms), socket.send_to(data, target)).await {
-            Ok(Ok(_)) => {
-                // Try to catch any ICMP or UDP reply
-                match timeout(Duration::from_millis(to_ms), socket.recv_from(&mut buf)).await {
-                    Ok(Ok((nrecv, src))) => {
-                        println!("UDP {host}:{port} received {nrecv} bytes from {src}");
-                        return Ok(());
+    retry_with_backoff(
+        retries,
+        to_ms,
+        backoff,
+        |attempt| {
+            let socket = &socket;
+            let data = data;
+            let mut buf = buf.clone();
+            let host = host.clone();
+            async move {
+                // Send datagram
+                match socket.send_to(data, target).await {
+                    Ok(_) => {
+                        // Try to catch any ICMP or UDP reply
+                        match socket.recv_from(&mut buf).await {
+                            Ok((nrecv, src)) => {
+                                println!("UDP {host}:{port} received {nrecv} bytes from {src}");
+                                Ok::<bool, AppError>(true) // stop retrying
+                            }
+                            Err(e) => {
+                                eprintln!("UDP {host}:{port} recv ERR {e} (attempt {attempt})");
+                                Ok::<bool, AppError>(false) // retry
+                            }
+                        }
                     }
-                    Ok(Err(e)) => eprintln!("UDP {host}:{port} recv ERR {e}"),
-                    Err(_) => eprintln!("UDP {host}:{port} no response (recv timeout)"),
+                    Err(e) => {
+                        eprintln!("UDP {host}:{port} send ERR {e} (attempt {attempt})");
+                        Ok::<bool, AppError>(false) // retry
+                    }
                 }
             }
-            Ok(Err(e)) => eprintln!("UDP {host}:{port} send ERR {e}"),
-            Err(_) => eprintln!("UDP {host}:{port} send TIMEOUT"),
-        }
-        if attempt < retries {
-            sleep(Duration::from_millis(backoff)).await;
-        }
-    }
+        },
+        |attempt| {
+            eprintln!(
+                "UDP {}:{} no response (recv timeout) (attempt {attempt})",
+                host, port
+            );
+        },
+    )
+    .await?;
 
     Ok(())
 }
