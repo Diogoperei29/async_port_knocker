@@ -33,10 +33,7 @@ pub(crate) async fn knock_tcp(
             }
         },
         |attempt| {
-            eprintln!(
-                "TCP {}:{} TIMEOUT (attempt {attempt})",
-                host_for_timeout, port
-            );
+            eprintln!("TCP {host_for_timeout}:{port} TIMEOUT (attempt {attempt})");
         },
     )
     .await;

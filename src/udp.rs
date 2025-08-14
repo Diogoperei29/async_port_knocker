@@ -54,7 +54,6 @@ pub(crate) async fn knock_udp(
         backoff,
         |attempt| {
             let socket = &socket;
-            let data = data;
             let mut buf = buf.clone();
             let host = host.clone();
             async move {
@@ -81,10 +80,7 @@ pub(crate) async fn knock_udp(
             }
         },
         |attempt| {
-            eprintln!(
-                "UDP {}:{} no response (recv timeout) (attempt {attempt})",
-                host, port
-            );
+            eprintln!("UDP {host}:{port} no response (recv timeout) (attempt {attempt})");
         },
     )
     .await?;
