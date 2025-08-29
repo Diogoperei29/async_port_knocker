@@ -31,7 +31,7 @@ This was done as a fun project to improve my RUST skills :)
 ## Installation
 
 ```bash
-git clone https://github.com/diogoperei29/async_port_knocker.git
+git clone https://github.com/diogoperei29/async-port-knocker.git
 cd async_port_knocker
 cargo build --release
 ```
